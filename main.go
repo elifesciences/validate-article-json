@@ -5,8 +5,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,17 +27,13 @@ func panic_on_err(err error, action string) {
 	}
 }
 
-func slurp_bytes(path string) []byte {
-	body, err := os.ReadFile(path)
-	panic_on_err(err, "slurping bytes from path: "+path)
-	return body
-}
-
 type Foo struct {
 	Label  string
 	Path   string
 	Schema *jsonschema.Schema
 }
+
+var SCHEMA_MAP map[string]Foo
 
 func configure_validator() map[string]Foo {
 	loader := jsonschema.Loaders["file"]
@@ -61,8 +60,16 @@ func configure_validator() map[string]Foo {
 	return schema_map
 }
 
+func init() {
+	SCHEMA_MAP = configure_validator()
+}
+
+// ---
+
 func read_article_data(article_json_path string) (string, interface{}) {
-	article_json_bytes := slurp_bytes(article_json_path)
+	article_json_bytes, err := os.ReadFile(article_json_path)
+	panic_on_err(err, "reading bytes from path: "+article_json_path)
+
 	result := gjson.GetBytes(article_json_bytes, "article.status")
 	if !result.Exists() {
 		panic("'article.status' field in article data not found: " + article_json_path)
@@ -89,7 +96,7 @@ func read_article_data(article_json_path string) (string, interface{}) {
 
 	// convert the article-json data into a simple go datatype
 	var article interface{}
-	err := json.Unmarshal(raw, &article)
+	err = json.Unmarshal(raw, &article)
 	panic_on_err(err, "unmarshalling article section bytes")
 
 	return schema_key, article
@@ -107,14 +114,22 @@ func validate(schema Foo, article interface{}) (bool, time.Duration) {
 
 }
 
-func main() {
-	args := os.Args[1:]
-	article_json_path := args[0]
-	schema_map := configure_validator()
+func path_exists(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+func path_is_dir(path string) bool {
+	fi, err := os.Lstat(path)
+	panic_on_err(err, "reading path: "+path)
+	return fi.Mode().IsDir()
+}
+
+func validate_article(article_json_path string) (bool, int64) {
 
 	// read article data and determine schema to use
 	schema_key, article := read_article_data(article_json_path)
-	schema, present := schema_map[schema_key]
+	schema, present := SCHEMA_MAP[schema_key]
 	if !present {
 		panic("schema not found: " + schema_key)
 	}
@@ -122,13 +137,51 @@ func main() {
 	// validate!
 	success, elapsed := validate(schema, article)
 
-	// "VOR valid after 2.689794ms", "POA invalid after 123.4ms"
-	msg := "%s %s after %s"
+	// "VOR valid after 2.689794ms: elife-09560-v1.xml.json", "POA invalid after 123.4ms: elife-09560-v1.xml.json"
+	msg := "%s %s in %4dms: %s"
+	fname := filepath.Base(article_json_path)
+	elapsed_ms := elapsed.Milliseconds()
 	if success {
-		println(fmt.Sprintf(msg, schema.Label, "valid", elapsed))
-		os.Exit(0)
+		println(fmt.Sprintf(msg, schema.Label, "valid", elapsed_ms, fname))
 	} else {
-		println(fmt.Sprintf(msg, schema.Label, "invalid", elapsed))
-		os.Exit(1)
+		println(fmt.Sprintf(msg, schema.Label, "invalid", elapsed_ms, fname))
+	}
+	return success, elapsed_ms
+}
+
+func main() {
+	args := os.Args[1:]
+	input_path := args[0]
+
+	if !path_exists(input_path) {
+		panic("input path does not exist")
+	}
+	if path_is_dir(input_path) {
+		// validate many
+		path_list, err := os.ReadDir(input_path)
+		panic_on_err(err, "reading contents of directory: "+input_path)
+		sample_size, err := strconv.Atoi(args[1])
+		panic_on_err(err, "converting sample size to an integer")
+
+		ms_list := []int64{}
+		for i, path := range path_list {
+			if !path.IsDir() {
+				_, ms_elapsed := validate_article(input_path + path.Name())
+				ms_list = append(ms_list, ms_elapsed)
+			}
+			if sample_size != 0 && i+1 == sample_size {
+				break
+			}
+		}
+
+		var total_ms int64
+		for _, ms := range ms_list {
+			total_ms = total_ms + ms
+		}
+		println(fmt.Sprintf("total: %dms  average: %dms", total_ms, (total_ms / int64(len(ms_list)))))
+
+	} else {
+		// assume file or a link pointing to a file, validate single
+		validate_article(input_path)
 	}
 }
