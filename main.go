@@ -30,31 +30,13 @@ func slurp_bytes(path string) []byte {
 	return body
 }
 
-func fail(msg string) int {
-	println(msg)
-	return 1
-}
-
-func success(msg string) int {
-	println(msg)
-	return 0
-}
-
 type Foo struct {
 	Label  string
 	Path   string
 	Schema *jsonschema.Schema
 }
 
-func main() {
-
-	// parse args
-
-	args := os.Args[1:]
-	article_json_path := args[0]
-
-	// configure validator
-
+func configure_validator() map[string]Foo {
 	loader := jsonschema.Loaders["file"]
 	c := jsonschema.NewCompiler()
 	c.Draft = jsonschema.Draft4
@@ -63,7 +45,6 @@ func main() {
 		"VOR": "api-raml/dist/model/article-vor.v7.json",
 	}
 	schema_map := map[string]Foo{}
-
 	for label, path := range schema_file_list {
 		rdr, err := loader(path)
 		panic_on_err(err, fmt.Sprintf("loading '%s' schema file: ", label, path))
@@ -77,29 +58,28 @@ func main() {
 			Schema: schema,
 		}
 	}
+	return schema_map
+}
 
-	// read article data and determine schema to use
-
+func read_article_data(article_json_path string) (string, interface{}) {
 	article_json_bytes := slurp_bytes(article_json_path)
 	result := gjson.GetBytes(article_json_bytes, "article.status")
 	if !result.Exists() {
 		panic("'article.status' field in article data not found: " + article_json_path)
 	}
 	schema_key := strings.ToUpper(result.String()) // "poa" => "POA"
-	schema, present := schema_map[schema_key]
-	if !present {
-		panic("schema not found: " + schema_key)
-	}
 
 	// article-json contains 'journal', 'snippet' and 'article' sections.
 	// extract just the 'article' from the article data.
-
 	result = gjson.GetBytes(article_json_bytes, "article")
 	if !result.Exists() {
 		panic("'article' field in article data not found: " + article_json_path)
 	}
-	// what is happening here?? we're extracting a slice of the matching bytes
-	// from the article-json without converting it to a string then back to bytes.
+
+	// what is happening here?? the slice of matching bytes are extracted from
+	// the article-json, skipping a conversion of `result` to a string then back
+	// to bytes for unmarshalling. if only a `result.Bytes()` existed :(
+	// - https://github.com/tidwall/gjson#user-content-working-with-bytes
 	var raw []byte
 	if result.Index > 0 {
 		raw = article_json_bytes[result.Index : result.Index+len(result.Raw)]
@@ -112,14 +92,43 @@ func main() {
 	err := json.Unmarshal(raw, &article)
 	panic_on_err(err, "unmarshalling article section bytes")
 
-	// finally, validate!
+	return schema_key, article
+}
 
+func validate(schema Foo, article interface{}) (bool, time.Duration) {
 	start := time.Now()
-	err = schema.Schema.Validate(article)
-	if err != nil {
-		os.Exit(fail("input file is not valid: " + err.Error()))
-	}
+	err := schema.Schema.Validate(article)
 	t := time.Now()
 	elapsed := t.Sub(start)
-	os.Exit(success(fmt.Sprintf("%s article validated in %s", schema.Label, elapsed)))
+	if err != nil {
+		return false, elapsed
+	}
+	return true, elapsed
+
+}
+
+func main() {
+	args := os.Args[1:]
+	article_json_path := args[0]
+	schema_map := configure_validator()
+
+	// read article data and determine schema to use
+	schema_key, article := read_article_data(article_json_path)
+	schema, present := schema_map[schema_key]
+	if !present {
+		panic("schema not found: " + schema_key)
+	}
+
+	// validate!
+	success, elapsed := validate(schema, article)
+
+	// "VOR valid after 2.689794ms", "POA invalid after 123.4ms"
+	msg := "%s %s after %s"
+	if success {
+		println(fmt.Sprintf(msg, schema.Label, "valid", elapsed))
+		os.Exit(0)
+	} else {
+		println(fmt.Sprintf(msg, schema.Label, "invalid", elapsed))
+		os.Exit(1)
+	}
 }
