@@ -149,8 +149,16 @@ func validate_article(article_json_path string) (bool, int64) {
 	return success, elapsed_ms
 }
 
+func worker(id int, jobs <-chan string, results chan<- int64) {
+	for path := range jobs {
+		_, ms_elapsed := validate_article(path)
+		results <- ms_elapsed
+	}
+}
+
 func main() {
 	args := os.Args[1:]
+	// required first argument is path to an xml document or a directory of xml.
 	input_path := args[0]
 
 	if !path_exists(input_path) {
@@ -160,25 +168,42 @@ func main() {
 		// validate many
 		path_list, err := os.ReadDir(input_path)
 		panic_on_err(err, "reading contents of directory: "+input_path)
-		sample_size, err := strconv.Atoi(args[1])
-		panic_on_err(err, "converting sample size to an integer")
-
-		ms_list := []int64{}
-		for i, path := range path_list {
-			if !path.IsDir() {
-				_, ms_elapsed := validate_article(input_path + path.Name())
-				ms_list = append(ms_list, ms_elapsed)
-			}
-			if sample_size != 0 && i+1 == sample_size {
-				break
+		sample_size := 1000
+		if len(args) == 2 {
+			// optional second argument is sample size
+			sample_size, err = strconv.Atoi(args[1])
+			panic_on_err(err, "converting sample size to an integer")
+			if sample_size == -1 {
+				sample_size = len(path_list)
 			}
 		}
+
+		jobs := make(chan string, sample_size)
+		results := make(chan int64) // time taken in ms
+
+		// init worker pool
+		num_workers := 10 // todo: set to num cpus
+		for w := 1; w <= num_workers; w++ {
+			go worker(w, jobs, results)
+		}
+
+		// send jobs to workers
+		for _, path := range path_list[:sample_size] {
+			if !path.IsDir() {
+				jobs <-  input_path + path.Name()
+			}
+		}
+
+		// there is a long pause here.
+		// perhaps we should be tallying results/printing progress as we go?
 
 		var total_ms int64
-		for _, ms := range ms_list {
-			total_ms = total_ms + ms
+		for i := 0; i < sample_size; i++ {
+			// total_ms = total_ms + ms
+			total_ms = total_ms + <-results
+
 		}
-		println(fmt.Sprintf("total: %dms  average: %dms", total_ms, (total_ms / int64(len(ms_list)))))
+		println(fmt.Sprintf("total: %dms  average: %dms", total_ms, (total_ms / int64(sample_size))))
 
 	} else {
 		// assume file or a link pointing to a file, validate single
