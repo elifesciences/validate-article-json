@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sourcegraph/conc/pool"
+
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/tidwall/gjson"
 )
@@ -105,8 +107,8 @@ func read_article_data(article_json_path string) (string, interface{}) {
 func validate(schema Foo, article interface{}) (bool, time.Duration) {
 	start := time.Now()
 	err := schema.Schema.Validate(article)
-	t := time.Now()
-	elapsed := t.Sub(start)
+	end := time.Now()
+	elapsed := end.Sub(start)
 	if err != nil {
 		return false, elapsed
 	}
@@ -125,7 +127,13 @@ func path_is_dir(path string) bool {
 	return fi.Mode().IsDir()
 }
 
-func validate_article(article_json_path string) (bool, int64) {
+type Result struct {
+	Path    string
+	Elapsed int64
+	Success bool
+}
+
+func validate_article(article_json_path string) Result {
 
 	// read article data and determine schema to use
 	schema_key, article := read_article_data(article_json_path)
@@ -146,14 +154,23 @@ func validate_article(article_json_path string) (bool, int64) {
 	} else {
 		println(fmt.Sprintf(msg, schema.Label, "invalid", elapsed_ms, fname))
 	}
-	return success, elapsed_ms
+	return Result{
+		Path:    article_json_path,
+		Elapsed: elapsed_ms,
+		Success: success,
+	}
 }
 
-func worker(id int, jobs <-chan string, results chan<- int64) {
-	for path := range jobs {
-		_, ms_elapsed := validate_article(path)
-		results <- ms_elapsed
+func format_ms(ms int64) string {
+	elapsed_str := fmt.Sprintf("%dms", ms)
+	if ms > 1000 {
+		// seconds
+		elapsed_str = fmt.Sprintf("%ds", ms/1000)
+	} else if ms > 60000 {
+		// minutes
+		elapsed_str = fmt.Sprintf("%dm", (ms/1000)/60)
 	}
+	return elapsed_str
 }
 
 func main() {
@@ -178,35 +195,52 @@ func main() {
 			}
 		}
 
-		jobs := make(chan string, sample_size)
-		results := make(chan int64) // time taken in ms
-
-		// init worker pool
-		num_workers := 10 // todo: set to num cpus
-		for w := 1; w <= num_workers; w++ {
-			go worker(w, jobs, results)
-		}
-
-		// send jobs to workers
+		// filter directories from path listing
+		file_list := []string{}
 		for _, path := range path_list[:sample_size] {
 			if !path.IsDir() {
-				jobs <-  input_path + path.Name()
+				file_list = append(file_list, input_path+path.Name())
 			}
 		}
 
-		// there is a long pause here.
-		// perhaps we should be tallying results/printing progress as we go?
+		num_workers := 10 // todo: set to num cpus
+		p := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
 
-		var total_ms int64
-		for i := 0; i < sample_size; i++ {
-			// total_ms = total_ms + ms
-			total_ms = total_ms + <-results
-
+		start_time := time.Now()
+		for _, file := range file_list {
+			file := file
+			p.Go(func() Result {
+				return validate_article(file)
+			})
 		}
-		println(fmt.Sprintf("total: %dms  average: %dms", total_ms, (total_ms / int64(sample_size))))
+		result_list := p.Wait()
+		end_time := time.Now()
+		wall_time_ms := end_time.Sub(start_time).Milliseconds()
+
+		var cpu_time_ms int64
+		for _, result := range result_list {
+			cpu_time_ms = cpu_time_ms + result.Elapsed
+		}
+
+		failures := []Result{}
+		for _, result := range result_list {
+			if !result.Success {
+				failures = append(failures, result)
+			}
+		}
+
+		println("")
+		println(fmt.Sprintf("articles:%d, failures:%d, workers:%d, wall-time:%s, cpu-time:%s, average:%dms", sample_size, len(failures), num_workers, format_ms(wall_time_ms), format_ms(cpu_time_ms), (cpu_time_ms / int64(sample_size))))
+
+		if len(failures) > 0 {
+			os.Exit(1)
+		}
 
 	} else {
 		// assume file or a link pointing to a file, validate single
-		validate_article(input_path)
+		result := validate_article(input_path)
+		if !result.Success {
+			os.Exit(1)
+		}
 	}
 }
