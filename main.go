@@ -104,15 +104,12 @@ func read_article_data(article_json_path string) (string, interface{}) {
 	return schema_key, article
 }
 
-func validate(schema Foo, article interface{}) (bool, time.Duration) {
+func validate(schema Foo, article interface{}) (error, time.Duration) {
 	start := time.Now()
 	err := schema.Schema.Validate(article)
 	end := time.Now()
 	elapsed := end.Sub(start)
-	if err != nil {
-		return false, elapsed
-	}
-	return true, elapsed
+	return err, elapsed
 
 }
 
@@ -128,12 +125,15 @@ func path_is_dir(path string) bool {
 }
 
 type Result struct {
-	Path    string
-	Elapsed int64
-	Success bool
+	Type     string
+	FileName string
+	Elapsed  int64
+	Success  bool
+	// these can get large. I recommend not accumulating them for large jobs with many problems.
+	Error error
 }
 
-func validate_article(article_json_path string) Result {
+func validate_article(article_json_path string, capture_error bool) Result {
 
 	// read article data and determine schema to use
 	schema_key, article := read_article_data(article_json_path)
@@ -143,22 +143,31 @@ func validate_article(article_json_path string) Result {
 	}
 
 	// validate!
-	success, elapsed := validate(schema, article)
+	err, elapsed := validate(schema, article)
 
-	// "VOR valid after 2.689794ms: elife-09560-v1.xml.json", "POA invalid after 123.4ms: elife-09560-v1.xml.json"
+	r := Result{
+		Type:     schema_key, // POA or VOR
+		FileName: filepath.Base(article_json_path),
+		Elapsed:  elapsed.Milliseconds(),
+		Success:  err == nil,
+	}
+
+	if capture_error && err != nil {
+		r.Error = err
+	}
+
+	return r
+}
+
+func (r Result) String() string {
+	// "VOR valid in     2.6ms: elife-09560-v1.xml.json"
+	// "POA invalid in 123.4ms: elife-09560-v1.xml.json"
 	msg := "%s %s in %4dms: %s"
-	fname := filepath.Base(article_json_path)
-	elapsed_ms := elapsed.Milliseconds()
-	if success {
-		println(fmt.Sprintf(msg, schema.Label, "valid", elapsed_ms, fname))
-	} else {
-		println(fmt.Sprintf(msg, schema.Label, "invalid", elapsed_ms, fname))
+	if r.Success {
+		return fmt.Sprintf(msg, r.Type, "valid", r.Elapsed, r.FileName)
 	}
-	return Result{
-		Path:    article_json_path,
-		Elapsed: elapsed_ms,
-		Success: success,
-	}
+	return fmt.Sprintf(msg, r.Type, "invalid", r.Elapsed, r.FileName)
+
 }
 
 func format_ms(ms int64) string {
@@ -171,6 +180,14 @@ func format_ms(ms int64) string {
 		elapsed_str = fmt.Sprintf("%dm", (ms/1000)/60)
 	}
 	return elapsed_str
+}
+
+func short_validation_error(err error) {
+	fmt.Printf("%v\n", err)
+}
+
+func long_validation_error(err error) {
+	fmt.Printf("%#v\n", err)
 }
 
 func main() {
@@ -190,9 +207,11 @@ func main() {
 			// optional second argument is sample size
 			sample_size, err = strconv.Atoi(args[1])
 			panic_on_err(err, "converting sample size to an integer")
-			if sample_size == -1 {
-				sample_size = len(path_list)
-			}
+		}
+
+		if sample_size == -1 || sample_size > len(path_list) {
+			// validate all files in dir
+			sample_size = len(path_list)
 		}
 
 		// filter directories from path listing
@@ -203,6 +222,7 @@ func main() {
 			}
 		}
 
+		capture_errors := false
 		num_workers := 10 // todo: set to num cpus
 		p := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
 
@@ -210,7 +230,9 @@ func main() {
 		for _, file := range file_list {
 			file := file
 			p.Go(func() Result {
-				return validate_article(file)
+				result := validate_article(file, capture_errors)
+				println(result.String())
+				return result
 			})
 		}
 		result_list := p.Wait()
@@ -233,13 +255,23 @@ func main() {
 		println(fmt.Sprintf("articles:%d, failures:%d, workers:%d, wall-time:%s, cpu-time:%s, average:%dms", sample_size, len(failures), num_workers, format_ms(wall_time_ms), format_ms(cpu_time_ms), (cpu_time_ms / int64(sample_size))))
 
 		if len(failures) > 0 {
+			println("")
+			for _, result := range failures {
+				println(result.String())
+				if capture_errors {
+					short_validation_error(result.Error)
+					println("---")
+				}
+			}
 			os.Exit(1)
 		}
 
 	} else {
 		// assume file or a link pointing to a file, validate single
-		result := validate_article(input_path)
+		capture_errors := true
+		result := validate_article(input_path, capture_errors)
 		if !result.Success {
+			long_validation_error(result.Error)
 			os.Exit(1)
 		}
 	}
