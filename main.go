@@ -162,7 +162,7 @@ func validate_article(article_json_path string, capture_error bool) Result {
 func (r Result) String() string {
 	// "VOR valid in     2.6ms: elife-09560-v1.xml.json"
 	// "POA invalid in 123.4ms: elife-09560-v1.xml.json"
-	msg := "%s %s in %4dms: %s"
+	msg := "%s %s in\t%4dms: %s"
 	if r.Success {
 		return fmt.Sprintf(msg, r.Type, "valid", r.Elapsed, r.FileName)
 	}
