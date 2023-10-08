@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +50,7 @@ func configure_validator() map[string]Foo {
 	schema_map := map[string]Foo{}
 	for label, path := range schema_file_list {
 		rdr, err := loader(path)
-		panic_on_err(err, fmt.Sprintf("loading '%s' schema file: ", label, path))
+		panic_on_err(err, fmt.Sprintf("loading '%s' schema file: %s", label, path))
 		err = c.AddResource(label, rdr)
 		panic_on_err(err, "adding schema to compiler: "+label)
 		schema, err := c.Compile(label)
@@ -190,40 +192,59 @@ func long_validation_error(err error) {
 	fmt.Printf("%#v\n", err)
 }
 
-func main() {
-	args := os.Args[1:]
-	// required first argument is path to an xml document or a directory of xml.
-	input_path := args[0]
-
-	if !path_exists(input_path) {
-		panic("input path does not exist")
+func die(b bool, msg string) {
+	if b {
+		fmt.Println(msg)
+		os.Exit(1)
 	}
+}
+
+func main() {
+	var err error
+	args := os.Args[1:]
+
+	// required first argument is path to an xml document or a directory of xml.
+	die(len(args) < 1, "path to article-json file or directory of files required")
+	input_path := args[0]
+	die(!path_exists(input_path), "input path does not exist")
+
+	// optional second argument is sample size
+	sample_size := 1000
+
+	if len(args) == 2 {
+		sample_size, err = strconv.Atoi(args[1])
+		die(err != nil, "second argument is not an integer. use -1 for 'all' articles. default is 1000.")
+	}
+
 	if path_is_dir(input_path) {
 		// validate many
 		path_list, err := os.ReadDir(input_path)
 		panic_on_err(err, "reading contents of directory: "+input_path)
-		sample_size := 1000
-		if len(args) == 2 {
-			// optional second argument is sample size
-			sample_size, err = strconv.Atoi(args[1])
-			panic_on_err(err, "converting sample size to an integer")
-		}
 
 		if sample_size == -1 || sample_size > len(path_list) {
 			// validate all files in dir
 			sample_size = len(path_list)
 		}
 
-		// filter directories from path listing
+		// filter any directories from path listing
 		file_list := []string{}
 		for _, path := range path_list[:sample_size] {
 			if !path.IsDir() {
-				file_list = append(file_list, input_path+path.Name())
+				file_list = append(file_list, filepath.Join(input_path, path.Name()))
 			}
 		}
 
+		slices.Sort(file_list)    // sort strings
+		slices.Reverse(file_list) // DESC
+
 		capture_errors := false
-		num_workers := 10 // todo: set to num cpus
+		num_workers := 1
+		if runtime.NumCPU() > 2 {
+			// on local machine with 12 cores average validation time on first
+			// 1k articles improves from ~450ms to ~350ms at 10 cores.
+			// feel free to tweak/remove.
+			num_workers = runtime.NumCPU() - 2
+		}
 		p := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
 
 		start_time := time.Now()
@@ -267,7 +288,7 @@ func main() {
 		}
 
 	} else {
-		// assume file or a link pointing to a file, validate single
+		// validate single
 		capture_errors := true
 		result := validate_article(input_path, capture_errors)
 		if !result.Success {
