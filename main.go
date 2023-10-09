@@ -260,13 +260,7 @@ func main() {
 		sample_size = len(file_list)
 
 		capture_errors := false
-		num_workers := 1
-		if runtime.NumCPU() > 2 {
-			// on local machine with 12 cores average validation time on first
-			// 1k articles improves from ~450ms to ~350ms at 10 cores.
-			// feel free to tweak/remove.
-			num_workers = runtime.NumCPU() - 2
-		}
+		num_workers := runtime.NumCPU()
 		p := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
 
 		start_time := time.Now()
