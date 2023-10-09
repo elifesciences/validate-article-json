@@ -223,6 +223,7 @@ func main() {
 	if len(args) == 3 {
 		sample_size, err = strconv.Atoi(args[2])
 		die(err != nil, "second argument is not an integer. use -1 for 'all' articles (default).")
+		die(sample_size <= 0 && sample_size != -1, "second argument must be -1 or a positive integer.")
 	}
 
 	if path_is_dir(input_path) {
