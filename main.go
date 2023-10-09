@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -216,12 +217,12 @@ func main() {
 	input_path := args[1]
 	die(!path_exists(input_path), "input path does not exist")
 
-	// optional second argument is sample size
-	sample_size := 1000
+	// optional second argument is sample size.
+	sample_size := -1
 
 	if len(args) == 3 {
 		sample_size, err = strconv.Atoi(args[2])
-		die(err != nil, "second argument is not an integer. use -1 for 'all' articles. default is 1000.")
+		die(err != nil, "second argument is not an integer. use -1 for 'all' articles (default).")
 	}
 
 	if path_is_dir(input_path) {
@@ -234,16 +235,28 @@ func main() {
 			sample_size = len(path_list)
 		}
 
-		// filter any directories from path listing
+		// sort files smallest to highest (asc).
+		// order of file listings is never guaranteed so sort before we take a sample.
+		// note! filename output happens in parallel so it may appear unordered.
+		sort.Slice(path_list, func(a, b int) bool {
+			return path_list[a].Name() < path_list[b].Name()
+		})
+
+		// filter any directories
 		file_list := []string{}
-		for _, path := range path_list[:sample_size] {
-			if !path.IsDir() {
-				file_list = append(file_list, filepath.Join(input_path, path.Name()))
+		for i := 0; i < sample_size; i++ {
+			path := path_list[i]
+			if path.IsDir() {
+				continue
 			}
+			file_list = append(file_list, filepath.Join(input_path, path.Name()))
 		}
 
-		slices.Sort(file_list)    // sort strings
-		slices.Reverse(file_list) // DESC
+		// reverse the sample (desc) so we do a natural 'count down' to the lowest article.
+		slices.Reverse(file_list)
+
+		// ensure the correct sample size is reported after filtering out directories.
+		sample_size = len(file_list)
 
 		capture_errors := false
 		num_workers := 1
