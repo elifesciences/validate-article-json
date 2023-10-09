@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -31,23 +32,21 @@ func panic_on_err(err error, action string) {
 	}
 }
 
-type Foo struct {
+type Schema struct {
 	Label  string
 	Path   string
 	Schema *jsonschema.Schema
 }
 
-var SCHEMA_MAP map[string]Foo
-
-func configure_validator() map[string]Foo {
+func configure_validator(schema_root string) map[string]Schema {
 	loader := jsonschema.Loaders["file"]
 	c := jsonschema.NewCompiler()
 	c.Draft = jsonschema.Draft4
 	schema_file_list := map[string]string{
-		"POA": "api-raml/dist/model/article-poa.v3.json",
-		"VOR": "api-raml/dist/model/article-vor.v7.json",
+		"POA": path.Join(schema_root, "/dist/model/article-poa.v3.json"),
+		"VOR": path.Join(schema_root, "/dist/model/article-vor.v7.json"),
 	}
-	schema_map := map[string]Foo{}
+	schema_map := map[string]Schema{}
 	for label, path := range schema_file_list {
 		rdr, err := loader(path)
 		panic_on_err(err, fmt.Sprintf("loading '%s' schema file: %s", label, path))
@@ -55,7 +54,7 @@ func configure_validator() map[string]Foo {
 		panic_on_err(err, "adding schema to compiler: "+label)
 		schema, err := c.Compile(label)
 		panic_on_err(err, "compiling schema: "+label)
-		schema_map[label] = Foo{
+		schema_map[label] = Schema{
 			Label:  label,
 			Path:   path,
 			Schema: schema,
@@ -65,7 +64,7 @@ func configure_validator() map[string]Foo {
 }
 
 func init() {
-	SCHEMA_MAP = configure_validator()
+
 }
 
 // ---
@@ -106,12 +105,12 @@ func read_article_data(article_json_path string) (string, interface{}) {
 	return schema_key, article
 }
 
-func validate(schema Foo, article interface{}) (error, time.Duration) {
+func validate(schema Schema, article interface{}) (time.Duration, error) {
 	start := time.Now()
 	err := schema.Schema.Validate(article)
 	end := time.Now()
 	elapsed := end.Sub(start)
-	return err, elapsed
+	return elapsed, err
 
 }
 
@@ -135,17 +134,17 @@ type Result struct {
 	Error error
 }
 
-func validate_article(article_json_path string, capture_error bool) Result {
+func validate_article(schema_map map[string]Schema, article_json_path string, capture_error bool) Result {
 
 	// read article data and determine schema to use
 	schema_key, article := read_article_data(article_json_path)
-	schema, present := SCHEMA_MAP[schema_key]
+	schema, present := schema_map[schema_key]
 	if !present {
 		panic("schema not found: " + schema_key)
 	}
 
 	// validate!
-	err, elapsed := validate(schema, article)
+	elapsed, err := validate(schema, article)
 
 	r := Result{
 		Type:     schema_key, // POA or VOR
@@ -162,8 +161,8 @@ func validate_article(article_json_path string, capture_error bool) Result {
 }
 
 func (r Result) String() string {
-	// "VOR valid in     2.6ms: elife-09560-v1.xml.json"
-	// "POA invalid in 123.4ms: elife-09560-v1.xml.json"
+	// "VOR valid in      2.6ms: elife-09560-v1.xml.json"
+	// "POA invalid in  123.4ms: elife-09560-v1.xml.json"
 	msg := "%s %s in\t%4dms: %s"
 	if r.Success {
 		return fmt.Sprintf(msg, r.Type, "valid", r.Elapsed, r.FileName)
@@ -204,15 +203,19 @@ func main() {
 	args := os.Args[1:]
 
 	// required first argument is path to an xml document or a directory of xml.
-	die(len(args) < 1, "path to article-json file or directory of files required")
-	input_path := args[0]
+	die(len(args) < 2, "first argument must be path to api-raml schema root, second path is to a article-json file or directory.")
+	schema_root := args[0]
+	die(!path_exists(schema_root), "schema root path does not exist")
+	schema_map := configure_validator(schema_root)
+
+	input_path := args[1]
 	die(!path_exists(input_path), "input path does not exist")
 
 	// optional second argument is sample size
 	sample_size := 1000
 
-	if len(args) == 2 {
-		sample_size, err = strconv.Atoi(args[1])
+	if len(args) == 3 {
+		sample_size, err = strconv.Atoi(args[2])
 		die(err != nil, "second argument is not an integer. use -1 for 'all' articles. default is 1000.")
 	}
 
@@ -251,7 +254,7 @@ func main() {
 		for _, file := range file_list {
 			file := file
 			p.Go(func() Result {
-				result := validate_article(file, capture_errors)
+				result := validate_article(schema_map, file, capture_errors)
 				println(result.String())
 				return result
 			})
@@ -290,7 +293,7 @@ func main() {
 	} else {
 		// validate single
 		capture_errors := true
-		result := validate_article(input_path, capture_errors)
+		result := validate_article(schema_map, input_path, capture_errors)
 		if !result.Success {
 			long_validation_error(result.Error)
 			os.Exit(1)
