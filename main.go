@@ -4,6 +4,7 @@ package main
 // - https://dev.to/vearutop/benchmarking-correctness-and-performance-of-go-json-schema-validators-3247
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,11 +21,8 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
-
-// todo:
-// https://json-schema.org/understanding-json-schema/reference/regular_expressions.html
-// https://github.com/santhosh-tekuri/jsonschema/issues/113
 
 func panic_on_err(err error, action string) {
 	if err != nil {
@@ -39,20 +37,31 @@ type Schema struct {
 }
 
 func configure_validator(schema_root string) map[string]Schema {
-	loader := jsonschema.Loaders["file"]
-	c := jsonschema.NewCompiler()
-	c.Draft = jsonschema.Draft4
+	compiler := jsonschema.NewCompiler()
+	compiler.Draft = jsonschema.Draft4
 	schema_file_list := map[string]string{
 		"POA": path.Join(schema_root, "/dist/model/article-poa.v3.json"),
 		"VOR": path.Join(schema_root, "/dist/model/article-vor.v7.json"),
 	}
+
 	schema_map := map[string]Schema{}
 	for label, path := range schema_file_list {
-		rdr, err := loader(path)
-		panic_on_err(err, fmt.Sprintf("loading '%s' schema file: %s", label, path))
-		err = c.AddResource(label, rdr)
+		file_bytes, err := os.ReadFile(path)
+		panic_on_err(err, fmt.Sprintf("reading '%s' schema file: %s", label, path))
+		if label == "VOR" {
+			// patch ISBN regex as it can't be compiled in Go.
+			// todo: this needs a fix upstream.
+			// https://json-schema.org/understanding-json-schema/reference/regular_expressions.html
+			// https://github.com/santhosh-tekuri/jsonschema/issues/113
+			find := "allOf.2.properties.references.items.definitions.book.properties.isbn.pattern"
+			replace := "^.+$"
+			file_bytes, err = sjson.SetBytes(file_bytes, find, replace)
+			panic_on_err(err, fmt.Sprintf("patching ISBN in '%s' schema: %s", label, path))
+		}
+
+		err = compiler.AddResource(label, bytes.NewReader(file_bytes))
 		panic_on_err(err, "adding schema to compiler: "+label)
-		schema, err := c.Compile(label)
+		schema, err := compiler.Compile(label)
 		panic_on_err(err, "compiling schema: "+label)
 		schema_map[label] = Schema{
 			Label:  label,
@@ -61,10 +70,6 @@ func configure_validator(schema_root string) map[string]Schema {
 		}
 	}
 	return schema_map
-}
-
-func init() {
-
 }
 
 // ---
