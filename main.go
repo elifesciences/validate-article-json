@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"sort"
 	"strconv"
@@ -204,7 +205,7 @@ func die(b bool, msg string) {
 	}
 }
 
-func main() {
+func do() {
 	var err error
 	args := os.Args[1:]
 
@@ -316,5 +317,31 @@ func main() {
 			long_validation_error(result.Error)
 			os.Exit(1)
 		}
+	}
+}
+
+func do_with_profiling(output_filename string) {
+	f, err := os.Create(output_filename)
+	die(err != nil, "could not create CPU profile")
+	defer f.Close()
+
+	err = pprof.StartCPUProfile(f)
+	die(err != nil, "could not start CPU profile")
+
+	defer pprof.StopCPUProfile()
+
+	do()
+}
+
+func main() {
+	profile := os.Getenv("VAJ_PROFILE")
+	if profile != "" {
+		println("profiling is on")
+		println("---")
+		do_with_profiling("cpu.prof")
+		println("---")
+		println("wrote cpu.prof")
+	} else {
+		do()
 	}
 }

@@ -30,11 +30,13 @@ elif test "$cmd" = "release"; then
     # ld -w is 'disable DWARF generation'
     # -trimpath removes leading paths to source files
     # -v 'verbose'
+    # -pgo 'profile-guided-optimisation' using the cpu profile 'cpu.prof'
     # -o 'output'
     GOOS=linux CGO_ENABLED=0 go build \
         -ldflags="-s -w" \
         -trimpath \
         -v \
+        -pgo cpu.prof \
         -o linux-amd64
     sha256sum linux-amd64 > linux-amd64.sha256
     echo ---
