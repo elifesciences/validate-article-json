@@ -209,21 +209,27 @@ func main() {
 	args := os.Args[1:]
 
 	// required first argument is path to an xml document or a directory of xml.
-	die(len(args) < 2, "first argument must be path to api-raml schema root, second path is to a article-json file or directory.")
+	die(len(args) < 1, "first argument must be the path to api-raml schema root.")
 	schema_root := args[0]
-	die(!path_exists(schema_root), "schema root path does not exist")
+	die(!path_exists(schema_root), "path to api-raml directory does not exist")
 	schema_map := configure_validator(schema_root)
 
+	die(len(args) < 2, "second argument must be the path to a article-json file or directory.")
 	input_path := args[1]
 	die(!path_exists(input_path), "input path does not exist")
 
 	// optional second argument is sample size.
 	sample_size := -1
-
-	if len(args) == 3 {
+	if len(args) > 2 {
 		sample_size, err = strconv.Atoi(args[2])
-		die(err != nil, "second argument is not an integer. use -1 for 'all' articles (default).")
+		die(err != nil, "second argument (article sample size) is not an integer. use -1 for 'all' articles (default).")
 		die(sample_size <= 0 && sample_size != -1, "second argument must be -1 or a positive integer.")
+	}
+
+	num_workers := runtime.NumCPU()
+	if len(args) > 3 {
+		num_workers, err = strconv.Atoi(args[3])
+		die(err != nil, "third argument (number of workers) is not an integer.")
 	}
 
 	if path_is_dir(input_path) {
@@ -260,19 +266,18 @@ func main() {
 		sample_size = len(file_list)
 
 		capture_errors := false
-		num_workers := runtime.NumCPU()
-		p := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
+		worker_pool := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
 
 		start_time := time.Now()
 		for _, file := range file_list {
 			file := file
-			p.Go(func() Result {
+			worker_pool.Go(func() Result {
 				result := validate_article(schema_map, file, capture_errors)
 				println(result.String())
 				return result
 			})
 		}
-		result_list := p.Wait()
+		result_list := worker_pool.Wait()
 		end_time := time.Now()
 		wall_time_ms := end_time.Sub(start_time).Milliseconds()
 
