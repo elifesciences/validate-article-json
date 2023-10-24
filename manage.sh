@@ -32,16 +32,27 @@ elif test "$cmd" = "release"; then
     # -v 'verbose'
     # -pgo 'profile-guided-optimisation' using the cpu profile 'cpu.prof'
     # -o 'output'
-    GOOS=linux CGO_ENABLED=0 go build \
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
         -ldflags="-s -w" \
         -trimpath \
         -v \
         -pgo cpu.prof \
         -o linux-amd64
     sha256sum linux-amd64 > linux-amd64.sha256
+
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+        -ldflags="-s -w" \
+        -trimpath \
+        -v \
+        -pgo cpu.prof \
+        -o linux-arm64
+    sha256sum linux-arm64 > linux-arm64.sha256
+
     echo ---
     echo "wrote linux-amd64"
     echo "wrote linux-amd64.sha256"
+    echo "wrote linux-arm64"
+    echo "wrote linux-arm64.sha256"
     exit 0
 
 elif test "$cmd" = "update-deps"; then

@@ -2,3 +2,4 @@ api-raml/
 *article-json*/
 validate-article-json
 linux-amd64*
+linux-arm64*
