@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path"
@@ -15,7 +16,6 @@ import (
 	"runtime/pprof"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -248,7 +248,7 @@ func process_files_with_feeder(buffer_size int, num_workers int, file_list []str
 			article_chan <- read_article_data(file)
 		}
 		close(article_chan)
-		println("(done reading files)")
+		//println("(done reading files)")
 	}(article_chan, &wg)
 
 	// process articles from `article_chan` until it's closed.
@@ -274,43 +274,31 @@ func process_files_with_feeder(buffer_size int, num_workers int, file_list []str
 }
 
 func do() {
-	var err error
-	args := os.Args[1:]
+	schema_root_ptr := flag.String("schema-root", "", "the path to api-raml schema root")
+	input_path_ptr := flag.String("article-json", "", "the path to a article-json file or directory")
+	sample_size_ptr := flag.Int("sample-size", -1, "the number of article-json files to parse")
+	num_workers_ptr := flag.Int("num-workers", runtime.NumCPU(), "the number of workers to process the article-json files")
+	// 1k articles is about ~1.5GiB of RAM
+	buffer_size_ptr := flag.Int("buffer-size", 2000, "the maximum number of article-json files to keep in memory at once")
+	flag.Parse()
 
-	// required first argument is path to an xml document or a directory of xml.
-	die(len(args) < 1, "first argument must be the path to api-raml schema root.")
-	schema_root := args[0]
-	die(!path_exists(schema_root), "path to api-raml directory does not exist")
+	schema_root := *schema_root_ptr
+	die(schema_root == "", "--schema-root is required")
+	die(!path_exists(schema_root), "--schema-root path does not exist. it should be a path to the api-raml.")
 	schema_map := configure_validator(schema_root)
 
-	die(len(args) < 2, "second argument must be the path to a article-json file or directory.")
-	input_path := args[1]
-	die(!path_exists(input_path), "input path does not exist")
+	input_path := *input_path_ptr
+	die(input_path == "", "--article-json is required")
+	die(!path_exists(input_path), "--article-json path does not exist. it should be a path to an article-json file or a directory of article-json files.")
 
-	// optional second argument is sample size.
-	sample_size := -1
-	if len(args) > 2 {
-		sample_size, err = strconv.Atoi(args[2])
-		die(err != nil, "second argument (article sample size) is not an integer. use -1 for 'all' articles (default).")
-		die(sample_size <= 0 && sample_size != -1, "second argument must be -1 or a positive integer.")
-	}
+	sample_size := *sample_size_ptr
+	die(sample_size < -1, "--sample-size must be -1 or greater")
 
-	num_workers := runtime.NumCPU()
-	if len(args) > 3 {
-		num_workers, err = strconv.Atoi(args[3])
-		die(err != nil, "third argument (number of workers) is not an integer.")
-		if num_workers <= 0 && num_workers != -1 {
-			fmt.Printf("third argument (number of workers) must be either -1 (unbounded) or a value > 0")
-			os.Exit(1)
-		}
-	}
+	num_workers := *num_workers_ptr
+	die(num_workers < -1, "--num-workers must be -1 or greater")
 
-	// the number of articles to keep in memory at once.
-	buffer_size := 2000 // 1k articles is about ~1.5GiB of RAM
-	if len(args) > 4 {
-		buffer_size, err = strconv.Atoi(args[4])
-		die(err != nil, "fourth argument (buffer size) is not an integer.")
-	}
+	buffer_size := *buffer_size_ptr
+	die(buffer_size < 1, "--buffer-size must be a positive integer")
 
 	if !path_is_dir(input_path) {
 		// validate single
