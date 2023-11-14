@@ -62,6 +62,10 @@ elif test "$cmd" = "update-deps"; then
     ./manage.sh build
     exit 0
 
+elif test "$cmd" = "cpu-graph"; then
+    go tool pprof -http 127.0.0.1:1236 cpu.prof
+    exit 0
+
 # ...
 
 fi
