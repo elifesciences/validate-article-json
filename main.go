@@ -256,10 +256,10 @@ func process_files_with_feeder(buffer_size int, num_workers int, file_list []str
 }
 
 func do() {
-	schema_root_ptr := flag.String("schema-root", "", "the path to api-raml schema root")
-	input_path_ptr := flag.String("article-json", "", "the path to a article-json file or directory")
-	sample_size_ptr := flag.Int("sample-size", -1, "the number of article-json files to parse")
-	num_workers_ptr := flag.Int("num-workers", 0, "the number of workers to process the article-json files")
+	schema_root_ptr := flag.String("schema-root", "", "path to api-raml schema root")
+	input_path_ptr := flag.String("article-json", "", "path to a article-json file or directory")
+	sample_size_ptr := flag.Int("sample-size", -1, "number of article-json files to parse")
+	num_workers_ptr := flag.Int("num-workers", 0, "number of workers (goroutines) to process the article-json files\n0 for number of cpu cores, -1 for unbounded")
 	// 1k articles is about ~1.5GiB of RAM
 	buffer_size_ptr := flag.Int("buffer-size", 2000, "the maximum number of article-json files to keep in memory at once")
 	flag.Parse()
@@ -274,7 +274,7 @@ func do() {
 	die(!path_exists(input_path), "--article-json path does not exist. it should be a path to an article-json file or a directory of article-json files.")
 
 	sample_size := *sample_size_ptr
-	die(sample_size < -1, "--sample-size must be -1 or greater")
+	die(sample_size < -1 || sample_size == 0, "--sample-size must be -1 or a value greater than 0")
 
 	num_workers := *num_workers_ptr
 	die(num_workers < -1, "--num-workers must be -1 or greater")
