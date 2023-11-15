@@ -68,8 +68,9 @@ func configure_validator(schema_root string) map[string]Schema {
 		if label == "VOR" {
 			// patch ISBN regex as it can't be compiled in Go.
 			// todo: this needs a fix upstream.
-			// https://json-schema.org/understanding-json-schema/reference/regular_expressions.html
-			// https://github.com/santhosh-tekuri/jsonschema/issues/113
+			// - https://json-schema.org/understanding-json-schema/reference/regular_expressions.html
+			// - https://github.com/santhosh-tekuri/jsonschema/issues/113
+			// - https://github.com/elifesciences/api-raml/blob/8e2ffb573b2c3d2e173c38cd8b9625cf2d5740ad/src/misc/isbn.v1.yaml#L6
 			find := "allOf.2.properties.references.items.definitions.book.properties.isbn.pattern"
 			replace := "^.+$"
 			file_bytes, err = sjson.SetBytes(file_bytes, find, replace)
@@ -211,25 +212,6 @@ func die(b bool, msg string) {
 	}
 }
 
-/*
-// process `file_list` by `num_workers` number of goroutines
-func process_files_in_parallel(num_workers int, file_list []string, schema_map map[string]Schema, capture_errors bool) (time.Time, time.Time, []Result) {
-	worker_pool := pool.NewWithResults[Result]().WithMaxGoroutines(num_workers)
-	start_time := time.Now()
-	for _, file := range file_list {
-		file := file
-		worker_pool.Go(func() Result {
-			article := read_article_data(file)
-			result := validate_article(schema_map, article, capture_errors)
-			println(result.String())
-			return result
-		})
-	}
-	result_list := worker_pool.Wait()
-	end_time := time.Now()
-	return start_time, end_time, result_list
-}
-*/
 // keep a buffer of N files in memory at once to feed a pool of validators.
 // ensures disk I/O is not a factor in keeping the CPU busy.
 func process_files_with_feeder(buffer_size int, num_workers int, file_list []string, schema_map map[string]Schema, capture_errors bool) (time.Time, time.Time, []Result) {
@@ -277,7 +259,7 @@ func do() {
 	schema_root_ptr := flag.String("schema-root", "", "the path to api-raml schema root")
 	input_path_ptr := flag.String("article-json", "", "the path to a article-json file or directory")
 	sample_size_ptr := flag.Int("sample-size", -1, "the number of article-json files to parse")
-	num_workers_ptr := flag.Int("num-workers", runtime.NumCPU(), "the number of workers to process the article-json files")
+	num_workers_ptr := flag.Int("num-workers", 0, "the number of workers to process the article-json files")
 	// 1k articles is about ~1.5GiB of RAM
 	buffer_size_ptr := flag.Int("buffer-size", 2000, "the maximum number of article-json files to keep in memory at once")
 	flag.Parse()
@@ -296,6 +278,9 @@ func do() {
 
 	num_workers := *num_workers_ptr
 	die(num_workers < -1, "--num-workers must be -1 or greater")
+	if num_workers == 0 {
+		num_workers = runtime.NumCPU()
+	}
 
 	buffer_size := *buffer_size_ptr
 	die(buffer_size < 1, "--buffer-size must be a positive integer")
@@ -343,7 +328,6 @@ func do() {
 		sample_size = len(file_list)
 
 		capture_errors := false
-		//start_time, end_time, result_list := process_files_in_parallel(num_workers, file_list, schema_map, capture_errors)
 		start_time, end_time, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_errors)
 		wall_time_ms := end_time.Sub(start_time).Milliseconds()
 
