@@ -67,8 +67,8 @@ func configure_validator(schema_root string) map[string]Schema {
 	compiler := jsonschema.NewCompiler()
 	compiler.Draft = jsonschema.Draft4
 	schema_file_list := map[string]string{
-		"POA": path.Join(schema_root, "/dist/model/article-poa.v3.json"),
-		"VOR": path.Join(schema_root, "/dist/model/article-vor.v7.json"),
+		"POA": path.Join(schema_root, "/dist/model/article-poa.v4.json"),
+		"VOR": path.Join(schema_root, "/dist/model/article-vor.v8.json"),
 	}
 
 	schema_map := map[string]Schema{}
@@ -259,9 +259,9 @@ func do() {
 	schema_root_ptr := flag.String("schema-root", "", "path to api-raml schema root")
 	input_path_ptr := flag.String("article-json", "", "path to a article-json file or directory")
 	sample_size_ptr := flag.Int("sample-size", -1, "number of article-json files to parse")
-	num_workers_ptr := flag.Int("num-workers", 0, "number of workers (goroutines) to process the article-json files\n0 for number of cpu cores, -1 for unbounded")
+	num_workers_ptr := flag.Int("num-workers", 0, "number of workers (goroutines) to process the article-json files\n0 for number of cpu cores (default), -1 for unbounded")
 	// 1k articles is about ~1.5GiB of RAM
-	buffer_size_ptr := flag.Int("buffer-size", 2000, "the maximum number of article-json files to keep in memory at once")
+	buffer_size_ptr := flag.Int("buffer-size", 1000, "the maximum number of article-json files to keep in memory at once")
 	flag.Parse()
 
 	schema_root := *schema_root_ptr
@@ -311,13 +311,19 @@ func do() {
 			return path_list[a].Name() < path_list[b].Name()
 		})
 
-		// remove any directories
 		file_list := []string{}
 		for i := 0; i < sample_size; i++ {
 			path := path_list[i]
+			// remove any directories
 			if path.IsDir() {
 				continue
 			}
+
+			// remove any non-json files
+			if filepath.Ext(path.Name()) != ".json" {
+				continue
+			}
+
 			file_list = append(file_list, filepath.Join(input_path, path.Name()))
 		}
 
