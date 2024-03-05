@@ -8,18 +8,19 @@
 
 ## Usage
 
-    $ go run main.go -h
-    Usage of /tmp/go-build3363302255/b001/exe/main:
+    $ go run . -h
+    Usage of /tmp/go-build3486126079/b001/exe/validate-article-json:
       -article-json string
-            the path to a article-json file or directory
+            path to an article-json file or directory
       -buffer-size int
-            the maximum number of article-json files to keep in memory at once (default 2000)
+            maximum number of article-json files to keep in memory at once (default 1000)
       -num-workers int
-            the number of workers to process the article-json files (default 12)
+            number of workers (goroutines) to process the article-json files
+            0 for number of cpu cores (default), -1 for unbounded
       -sample-size int
-            the number of article-json files to parse (default -1)
+            number of article-json files to parse (default -1)
       -schema-root string
-            the path to api-raml schema root
+            path to api-raml schema root
 
 For example:
 
@@ -46,6 +47,6 @@ sys	0m0.181s
 
 ## Licence
 
-Copyright © 2023 eLife Sciences
+Copyright © 2024 eLife Sciences
 
 Distributed under the GNU Affero General Public Licence, version 3.

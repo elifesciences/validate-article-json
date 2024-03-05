@@ -257,11 +257,11 @@ func process_files_with_feeder(buffer_size int, num_workers int, file_list []str
 
 func do() {
 	schema_root_ptr := flag.String("schema-root", "", "path to api-raml schema root")
-	input_path_ptr := flag.String("article-json", "", "path to a article-json file or directory")
+	input_path_ptr := flag.String("article-json", "", "path to an article-json file or directory")
 	sample_size_ptr := flag.Int("sample-size", -1, "number of article-json files to parse")
 	num_workers_ptr := flag.Int("num-workers", 0, "number of workers (goroutines) to process the article-json files\n0 for number of cpu cores (default), -1 for unbounded")
 	// 1k articles is about ~1.5GiB of RAM
-	buffer_size_ptr := flag.Int("buffer-size", 1000, "the maximum number of article-json files to keep in memory at once")
+	buffer_size_ptr := flag.Int("buffer-size", 1000, "maximum number of article-json files to keep in memory at once")
 	flag.Parse()
 
 	schema_root := *schema_root_ptr
