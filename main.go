@@ -47,6 +47,16 @@ type Result struct {
 	Error error
 }
 
+// "VOR valid in      2.6ms: elife-09560-v1.xml.json"
+// "POA invalid in  123.4ms: elife-09560-v1.xml.json"
+func (r Result) String() string {
+	msg := "%s %s in\t%4dms: %s"
+	if r.Success {
+		return fmt.Sprintf(msg, r.Type, "valid", r.Elapsed, r.FileName)
+	}
+	return fmt.Sprintf(msg, r.Type, "invalid", r.Elapsed, r.FileName)
+}
+
 type Article struct {
 	Type     string // POA or VOR
 	FileName string
@@ -67,7 +77,7 @@ func configure_validator(schema_root string) map[string]Schema {
 		panic_on_err(err, fmt.Sprintf("reading '%s' schema file: %s", label, path))
 		if label == "VOR" {
 			// patch ISBN regex as it can't be compiled in Go.
-			// todo: this needs a fix upstream.
+			// todo: this needs a fix upstream in api-raml.
 			// - https://json-schema.org/understanding-json-schema/reference/regular_expressions.html
 			// - https://github.com/santhosh-tekuri/jsonschema/issues/113
 			// - https://github.com/elifesciences/api-raml/blob/8e2ffb573b2c3d2e173c38cd8b9625cf2d5740ad/src/misc/isbn.v1.yaml#L6
@@ -96,15 +106,15 @@ func read_article_data(article_json_path string) Article {
 	article_json_bytes, err := os.ReadFile(article_json_path)
 	panic_on_err(err, "reading bytes from path: "+article_json_path)
 
-	result := gjson.GetBytes(article_json_bytes, "article.status")
-	if !result.Exists() {
+	article_status := gjson.GetBytes(article_json_bytes, "article.status") // "poa", "vor"
+	if !article_status.Exists() {
 		panic("'article.status' field in article data not found: " + article_json_path)
 	}
-	schema_key := strings.ToUpper(result.String()) // "poa" => "POA"
+	schema_key := strings.ToUpper(article_status.String()) // "poa" => "POA"
 
 	// article-json contains 'journal', 'snippet' and 'article' sections.
 	// extract just the 'article' from the article data.
-	result = gjson.GetBytes(article_json_bytes, "article")
+	result := gjson.GetBytes(article_json_bytes, "article")
 	if !result.Exists() {
 		panic("'article' field in article data not found: " + article_json_path)
 	}
@@ -173,16 +183,6 @@ func validate_article(schema_map map[string]Schema, article Article, capture_err
 	}
 
 	return r
-}
-
-func (r Result) String() string {
-	// "VOR valid in      2.6ms: elife-09560-v1.xml.json"
-	// "POA invalid in  123.4ms: elife-09560-v1.xml.json"
-	msg := "%s %s in\t%4dms: %s"
-	if r.Success {
-		return fmt.Sprintf(msg, r.Type, "valid", r.Elapsed, r.FileName)
-	}
-	return fmt.Sprintf(msg, r.Type, "invalid", r.Elapsed, r.FileName)
 }
 
 func format_ms(ms int64) string {
@@ -304,14 +304,14 @@ func do() {
 			sample_size = len(path_list)
 		}
 
-		// sort files smallest to highest (asc).
+		// sort files by filename, numerically, lowest to highest (asc).
 		// order of file listings is never guaranteed so sort before we take a sample.
-		// note! filename output happens in parallel so it may appear unordered.
+		// note! filename output happens in parallel so progress may *appear* unordered.
 		sort.Slice(path_list, func(a, b int) bool {
 			return path_list[a].Name() < path_list[b].Name()
 		})
 
-		// filter any directories
+		// remove any directories
 		file_list := []string{}
 		for i := 0; i < sample_size; i++ {
 			path := path_list[i]
