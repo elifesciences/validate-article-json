@@ -1,4 +1,5 @@
 api-raml/
+*~
 *article-json*/
 validate-article-json
 linux-amd64*
