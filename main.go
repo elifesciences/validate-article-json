@@ -187,12 +187,13 @@ func validate_article(schema_map map[string]Schema, article Article, capture_err
 
 func format_ms(ms int64) string {
 	elapsed_str := fmt.Sprintf("%dms", ms)
-	if ms > 1000 {
-		// seconds
-		elapsed_str = fmt.Sprintf("%ds", ms/1000)
-	} else if ms > 60000 {
+	if ms >= 60000 {
 		// minutes
 		elapsed_str = fmt.Sprintf("%dm", (ms/1000)/60)
+
+	} else if ms >= 1000 {
+		// seconds
+		elapsed_str = fmt.Sprintf("%ds", ms/1000)
 	}
 	return elapsed_str
 }
