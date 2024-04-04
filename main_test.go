@@ -14,7 +14,7 @@ func Test_format_ms(t *testing.T) {
 		1:     "1ms",
 		100:   "100ms",
 		1000:  "1s",
-		60001: "1m",
+		60000: "1m",
 	}
 	for given, expected := range cases {
 		assert.Equal(t, expected, format_ms(given))
