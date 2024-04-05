@@ -63,18 +63,51 @@ type Article struct {
 	Data     interface{} // unmarshalled json data
 }
 
-func configure_validator(schema_root string) map[string]Schema {
+// given a globbed path `pattern`, return the latest version of any matches.
+// for example, if `/path/to/vor.v*.json` matches a `vor.v1.json` and `vor.v2.json`,
+// then `/path/to/vor.v2.json` will be returned.
+func find_first_schema(pattern string) (string, error) {
+	empty_response := ""
+	path_list, err := filepath.Glob(pattern)
+	if err != nil {
+		return empty_response, fmt.Errorf("no path to POA schema found: %w", err)
+	}
+	slices.Sort(path_list)              // sorts ASC, lowest version to highest version
+	path := path_list[len(path_list)-1] // use highest version available
+	return path, nil
+}
+
+// creates a json-schema validator,
+// adds the latest POA and VOR schemas it can find to it,
+// compiles them,
+// returning a map of labels => compiled-schemas
+func configure_validator(schema_root string) (map[string]Schema, error) {
+	var empty_response map[string]Schema
+
 	compiler := jsonschema.NewCompiler()
 	compiler.Draft = jsonschema.Draft4
+
+	poa_schema, err := find_first_schema(path.Join(schema_root, "/dist/model/article-poa.v*.json"))
+	if err != nil {
+		return empty_response, errors.New("failed to find a POA schema")
+	}
+
+	vor_schema, err := find_first_schema(path.Join(schema_root, "/dist/model/article-vor.v*.json"))
+	if err != nil {
+		return empty_response, errors.New("failed to find a VOR schema")
+	}
+
 	schema_file_list := map[string]string{
-		"POA": path.Join(schema_root, "/dist/model/article-poa.v4.json"),
-		"VOR": path.Join(schema_root, "/dist/model/article-vor.v8.json"),
+		"POA": poa_schema,
+		"VOR": vor_schema,
 	}
 
 	schema_map := map[string]Schema{}
 	for label, path := range schema_file_list {
 		file_bytes, err := os.ReadFile(path)
-		panic_on_err(err, fmt.Sprintf("reading '%s' schema file: %s", label, path))
+		if err != nil {
+			return empty_response, fmt.Errorf("failed to read %s schema: %w", label, err)
+		}
 		if label == "VOR" {
 			// patch ISBN regex as it can't be compiled in Go.
 			// todo: this needs a fix upstream in api-raml.
@@ -84,20 +117,28 @@ func configure_validator(schema_root string) map[string]Schema {
 			find := "allOf.2.properties.references.items.definitions.book.properties.isbn.pattern"
 			replace := "^.+$"
 			file_bytes, err = sjson.SetBytes(file_bytes, find, replace)
-			panic_on_err(err, fmt.Sprintf("patching ISBN in '%s' schema: %s", label, path))
+			if err != nil {
+				return empty_response, fmt.Errorf("failed to patch ISBN in %s schema: %w", label, err)
+			}
 		}
 
 		err = compiler.AddResource(label, bytes.NewReader(file_bytes))
-		panic_on_err(err, "adding schema to compiler: "+label)
+		if err != nil {
+			return empty_response, fmt.Errorf("failed to add %s schema to compiler: %w", label, err)
+		}
+
 		schema, err := compiler.Compile(label)
-		panic_on_err(err, "compiling schema: "+label)
+		if err != nil {
+			return empty_response, fmt.Errorf("failed to compile %s schema: %w", label, err)
+		}
+
 		schema_map[label] = Schema{
 			Label:  label,
 			Path:   path,
 			Schema: schema,
 		}
 	}
-	return schema_map
+	return schema_map, nil
 }
 
 // ---
@@ -213,9 +254,11 @@ func die(b bool, msg string) {
 	}
 }
 
-// keep a buffer of N files in memory at once to feed a pool of validators.
+// keep a buffer of `buffer_size` files in memory at once to feed a pool of `num_workers`.
 // ensures disk I/O is not a factor in keeping the CPU busy.
-func process_files_with_feeder(buffer_size int, num_workers int, file_list []string, schema_map map[string]Schema, capture_errors bool) (time.Time, time.Time, []Result) {
+// when `capture_error` is true, the validation is available in the `Result` struct.
+// when `print_status` is true, a short valid/invalid message is printed as it occurs.
+func process_files_with_feeder(buffer_size int, num_workers int, file_list []string, schema_map map[string]Schema, capture_error bool, print_status bool) (time.Time, time.Time, []Result) {
 	// read files from disk into buffer
 
 	job_size := len(file_list)
@@ -244,8 +287,10 @@ func process_files_with_feeder(buffer_size int, num_workers int, file_list []str
 	for article := range article_chan {
 		article := article
 		worker_pool.Go(func() Result {
-			result := validate_article(schema_map, article, capture_errors)
-			println(result.String())
+			result := validate_article(schema_map, article, capture_error)
+			if print_status {
+				println(result.String())
+			}
 			return result
 		})
 	}
@@ -268,7 +313,8 @@ func do() {
 	schema_root := *schema_root_ptr
 	die(schema_root == "", "--schema-root is required")
 	die(!path_exists(schema_root), "--schema-root path does not exist. it should be a path to the api-raml.")
-	schema_map := configure_validator(schema_root)
+	schema_map, err := configure_validator(schema_root)
+	die(err != nil, fmt.Sprintf("failed to configure validator: %v", err))
 
 	input_path := *input_path_ptr
 	die(input_path == "", "--article-json is required")
@@ -334,8 +380,9 @@ func do() {
 		// ensure the correct sample size is reported after filtering out directories.
 		sample_size = len(file_list)
 
-		capture_errors := false
-		start_time, end_time, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_errors)
+		capture_error := false
+		print_result := true
+		start_time, end_time, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_error, print_result)
 		wall_time_ms := end_time.Sub(start_time).Milliseconds()
 
 		var cpu_time_ms int64
@@ -357,11 +404,40 @@ func do() {
 			println("")
 			for _, result := range failures {
 				println(result.String())
-				if capture_errors {
+				if capture_error {
 					short_validation_error(result.Error)
 					println("---")
 				}
 			}
+
+			// re-validate the first N failures but with detailed validation errors this time.
+
+			num_to_revalidate := 25
+			if len(failures) > num_to_revalidate {
+				fmt.Printf("\ntoo many errors to show, showing first %d:\n", num_to_revalidate)
+				num_to_revalidate = num_to_revalidate - 1
+			} else {
+				num_to_revalidate = len(failures) - 1
+			}
+
+			fmt.Println()
+
+			file_list := []string{}
+			for i := 0; i <= num_to_revalidate; i++ {
+				file_list = append(file_list, failures[i].FileName)
+			}
+
+			num_workers = 1
+			capture_error = true
+			print_result = false
+			_, _, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_error, print_result)
+			for i, result := range result_list {
+				// "--- failure 1 of 2: path/to/invalid.xml.json"
+				fmt.Printf("--- failure %d of %d: %v\n", i+1, len(failures), result.FileName)
+				long_validation_error(result.Error)
+				fmt.Println()
+			}
+
 			os.Exit(1)
 		}
 	}
