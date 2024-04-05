@@ -63,6 +63,9 @@ type Article struct {
 	Data     interface{} // unmarshalled json data
 }
 
+// given a globbed path `pattern`, return the latest version of any matches.
+// for example, if `/path/to/vor.v*.json` matches a `vor.v1.json` and `vor.v2.json`,
+// then `/path/to/vor.v2.json` will be returned.
 func find_first_schema(pattern string) (string, error) {
 	empty_response := ""
 	path_list, err := filepath.Glob(pattern)
@@ -74,6 +77,10 @@ func find_first_schema(pattern string) (string, error) {
 	return path, nil
 }
 
+// creates a json-schema validator,
+// adds the latest POA and VOR schemas it can find to it,
+// compiles them,
+// returning a map of labels => compiled-schemas
 func configure_validator(schema_root string) (map[string]Schema, error) {
 	var empty_response map[string]Schema
 
@@ -374,8 +381,8 @@ func do() {
 		sample_size = len(file_list)
 
 		capture_error := false
-		print_status := true
-		start_time, end_time, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_error, print_status)
+		print_result := true
+		start_time, end_time, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_error, print_result)
 		wall_time_ms := end_time.Sub(start_time).Milliseconds()
 
 		var cpu_time_ms int64
@@ -403,7 +410,7 @@ func do() {
 				}
 			}
 
-			// re-validate the first N failures but with longer validation errors this time.
+			// re-validate the first N failures but with detailed validation errors this time.
 
 			num_to_revalidate := 25
 			if len(failures) > num_to_revalidate {
@@ -422,9 +429,10 @@ func do() {
 
 			num_workers = 1
 			capture_error = true
-			print_status = false
-			_, _, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_error, print_status)
+			print_result = false
+			_, _, result_list := process_files_with_feeder(buffer_size, num_workers, file_list, schema_map, capture_error, print_result)
 			for i, result := range result_list {
+				// "--- failure 1 of 2: path/to/invalid.xml.json"
 				fmt.Printf("--- failure %d of %d: %v\n", i+1, len(failures), result.FileName)
 				long_validation_error(result.Error)
 				fmt.Println()
